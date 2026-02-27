@@ -9,10 +9,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ColdChain">
-<link rel="manifest" href="manifest.json">
-<!-- PWA icon fallback for iOS (inline SVG data URI) -->
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%230a0e14'/%3E%3Ctext x='96' y='130' font-size='100' text-anchor='middle'%3E%E2%9D%84%EF%B8%8F%3C/text%3E%3C/svg%3E">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<!-- Manifest and apple-touch-icon injected by JS only when served over HTTP -->
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" onerror="this.remove()">
 <style>
   :root {
     --bg: #0a0e14;
@@ -736,6 +734,33 @@
     margin-top: 1rem;
   }
 
+  /* ── DB Setup Modal ──────────────────────────────────────────────── */
+  .db-steps { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.2rem; }
+  .db-step {
+    display: flex; gap: 0.75rem; align-items: flex-start;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.75rem 1rem;
+  }
+  .db-step-num {
+    font-family: var(--mono); font-size: 0.75rem; font-weight: 700;
+    color: var(--accent); min-width: 20px; padding-top: 1px;
+  }
+  .db-step-text { font-size: 0.8rem; color: var(--text2); line-height: 1.5; }
+  .db-step-text code {
+    font-family: var(--mono); font-size: 0.75rem;
+    background: var(--surface2); color: var(--cold);
+    padding: 0.1rem 0.35rem; border-radius: 2px;
+  }
+  .db-status {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 3px; margin-bottom: 1rem;
+  }
+  .db-status.connected { background: rgba(34,197,94,0.1); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+  .db-status.disconnected { background: rgba(74,101,128,0.1); color: var(--text3); border: 1px solid var(--border); }
+  .db-status.error { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+
   /* ── PWA Install Banner ──────────────────────────────────────────── */
   .pwa-banner {
     position: fixed; bottom: 1.5rem; left: 1.5rem;
@@ -767,22 +792,20 @@
   }
   .pwa-banner-actions { display: flex; gap: 0.5rem; }
 
-  /* ── Offline indicator ───────────────────────────────────────────── */
-  .offline-bar {
-    position: fixed; top: 60px; left: 0; right: 0;
-    z-index: 150;
-    background: rgba(245,158,11,0.95);
-    color: #000;
-    text-align: center;
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    padding: 0.4rem;
-    transform: translateY(-100%);
-    transition: transform 0.25s ease;
+  /* ── Sync / connection pill ──────────────────────────────────────── */
+  #sync-indicator {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.08em;
+    padding: 0.18rem 0.55rem; border-radius: 20px;
+    border: 1px solid var(--border); cursor: pointer;
+    transition: all 0.2s; user-select: none; margin-top: 0.25rem;
   }
-  .offline-bar.visible { transform: translateY(0); }
+  #sync-indicator:hover { border-color: var(--accent2); }
+  #sync-indicator.state-live    { color: var(--success); border-color: rgba(34,197,94,0.4);  background: rgba(34,197,94,0.08); }
+  #sync-indicator.state-syncing { color: var(--warn);    border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+  #sync-indicator.state-local   { color: var(--text3);   border-color: var(--border);        background: transparent; }
+  #sync-indicator.state-offline { color: var(--warn);    border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+  #sync-indicator.state-error   { color: var(--danger);  border-color: rgba(239,68,68,0.4);  background: rgba(239,68,68,0.08); }
 
   @media (max-width: 768px) {
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -801,12 +824,10 @@
   </div>
   <div class="header-meta">
     WAREHOUSE INVENTORY SYSTEM<br>
-    <span id="clock">—</span>
+    <span id="clock">—</span><br>
+    <span id="sync-indicator" class="state-local" onclick="openDbSetup()" title="Click to configure database">○ LOCAL</span>
   </div>
 </header>
-
-<!-- Offline indicator -->
-<div class="offline-bar" id="offline-bar">⚡ OFFLINE MODE — Changes are saved locally and will sync when reconnected</div>
 
 <!-- PWA install banner (shown when installable) -->
 <div class="pwa-banner" id="pwa-banner" style="display:none">
@@ -1121,45 +1142,420 @@
   </div>
 </div>
 
+<!-- DB Setup Modal -->
+<div class="modal-overlay" id="db-overlay">
+  <div class="modal" style="width:560px">
+    <div class="modal-header">
+      <span class="modal-title">DATABASE CONNECTION</span>
+      <button class="modal-close" onclick="closeDbSetup()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="db-status-bar" class="db-status disconnected">○ Not connected — running in local mode</div>
+
+      <p style="font-size:0.82rem;color:var(--text2);margin-bottom:1rem;line-height:1.6">
+        Connect to <strong style="color:var(--text)">Supabase</strong> so your whole team shares the same inventory in real time.
+        It takes about 5 minutes and is free.
+      </p>
+
+      <div class="db-steps">
+        <div class="db-step">
+          <div class="db-step-num">1</div>
+          <div class="db-step-text">Go to <code>supabase.com</code> → Sign up for a free account → Click <strong>New Project</strong>. Name it <code>coldchain</code>.</div>
+        </div>
+        <div class="db-step">
+          <div class="db-step-num">2</div>
+          <div class="db-step-text">In your project, go to <strong>SQL Editor</strong> → paste and run the setup SQL below to create the tables.</div>
+        </div>
+        <div class="db-step">
+          <div class="db-step-num">3</div>
+          <div class="db-step-text">Go to <strong>Project Settings → API</strong>. Copy your <code>Project URL</code> and <code>anon public</code> key and paste them below.</div>
+        </div>
+      </div>
+
+      <!-- SQL copy box -->
+      <div style="margin-bottom:1.2rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem">
+          <span style="font-family:var(--mono);font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3)">Setup SQL — paste into Supabase SQL Editor</span>
+          <button class="btn btn-outline btn-sm" onclick="copySQL()">Copy SQL</button>
+        </div>
+        <pre id="setup-sql" style="background:var(--bg);border:1px solid var(--border);border-radius:3px;padding:0.75rem;font-family:var(--mono);font-size:0.68rem;color:var(--cold);overflow-x:auto;white-space:pre;line-height:1.5">-- Run this in Supabase SQL Editor
+create table if not exists inventory (
+  id text primary key,
+  name text not null,
+  category text,
+  sku text,
+  quantity integer default 0,
+  par_level integer default 0,
+  weight text,
+  storage_temp text,
+  location text,
+  expiration_date date,
+  received_date date,
+  supplier text,
+  cost_per_unit numeric(10,2) default 0,
+  notes text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists movements (
+  id text primary key,
+  item_id text references inventory(id) on delete set null,
+  item_name text not null,
+  item_sku text,
+  direction text check (direction in ('in','out')),
+  amount integer not null,
+  qty_before integer,
+  qty_after integer,
+  reason text,
+  note text,
+  created_at timestamptz default now()
+);
+
+-- Enable realtime
+alter publication supabase_realtime add table inventory;
+alter publication supabase_realtime add table movements;
+
+-- Allow public access (no login required)
+alter table inventory enable row level security;
+alter table movements enable row level security;
+create policy "Public read" on inventory for select using (true);
+create policy "Public write" on inventory for all using (true) with check (true);
+create policy "Public read" on movements for select using (true);
+create policy "Public write" on movements for all using (true) with check (true);</pre>
+      </div>
+
+      <!-- Credentials form -->
+      <div class="form-grid" style="grid-template-columns:1fr">
+        <div class="form-group">
+          <label class="form-label">Supabase Project URL</label>
+          <input type="text" class="form-input" id="db-url" placeholder="https://xxxxxxxxxxxx.supabase.co">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Supabase Anon Public Key</label>
+          <input type="text" class="form-input" id="db-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+          <span class="form-hint">This is safe to use in the browser — it's the public key, not the secret.</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-danger" id="db-disconnect-btn" onclick="disconnectDB()" style="display:none">Disconnect</button>
+      <div style="display:flex;gap:0.75rem">
+        <button class="btn btn-outline" onclick="closeDbSetup()">Cancel</button>
+        <button class="btn btn-primary" onclick="connectDB()">Connect Database</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Toasts -->
 <div class="toast-container" id="toast-container"></div>
 
 <script>
+// ── Supabase CDN ───────────────────────────────────────────────────────────
+// Loaded dynamically so the app works offline without it
+let supabase = null;
+
+async function loadSupabaseSDK() {
+  return new Promise((resolve) => {
+    // Already loaded
+    if (window.supabase) { resolve(true); return; }
+    // Can't load external scripts from file:// — skip silently
+    if (!CC.isHTTP) { resolve(false); return; }
+
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+    s.onload = () => resolve(true);
+    s.onerror = () => {
+      CC.warn('Supabase SDK failed to load from CDN — check your internet connection.');
+      resolve(false);
+    };
+    document.head.appendChild(s);
+  });
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 let inventory = [];
 let editingId = null;
 let sortKey = 'name';
 let sortDir = 1;
 const STORAGE_KEY = 'coldchain_inventory';
+const SUPABASE_CONFIG_KEY = 'coldchain_supabase_config';
+let realtimeChannel = null;
+let dbMode = 'local'; // 'supabase' | 'local'
 
-// ── Storage (uses window.storage if available, falls back to localStorage) ─
-async function loadData() {
+// ── Supabase Config ────────────────────────────────────────────────────────
+function getSupabaseConfig() {
   try {
-    if (window.storage) {
-      const result = await window.storage.get(STORAGE_KEY);
-      if (result && result.value) {
-        inventory = JSON.parse(result.value);
-        return;
-      }
-    }
-  } catch(e) {}
-  // fallback
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) inventory = JSON.parse(saved);
-  } catch(e) {}
-  if (!inventory.length) seedData();
+    const raw = localStorage.getItem(SUPABASE_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
 }
 
-async function saveData() {
-  const json = JSON.stringify(inventory);
+function saveSupabaseConfig(url, key) {
+  localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify({ url, key }));
+}
+
+function clearSupabaseConfig() {
+  localStorage.removeItem(SUPABASE_CONFIG_KEY);
+  supabase = null;
+  dbMode = 'local';
+}
+
+async function initSupabase() {
+  const config = getSupabaseConfig();
+  if (!config?.url || !config?.key) return false;
+  const loaded = await loadSupabaseSDK();
+  if (!loaded) return false;
   try {
-    if (window.storage) {
-      await window.storage.set(STORAGE_KEY, json);
-      return;
+    supabase = window.supabase.createClient(config.url, config.key);
+    // Quick connectivity test
+    const { error } = await supabase.from('inventory').select('id').limit(1);
+    if (error) throw error;
+    dbMode = 'supabase';
+    return true;
+  } catch(e) {
+    console.warn('[ColdChain] Supabase init failed:', e.message);
+    supabase = null;
+    dbMode = 'local';
+    return false;
+  }
+}
+
+// ── Realtime: listen for changes from other users ─────────────────────────
+function subscribeRealtime() {
+  if (!supabase || realtimeChannel) return;
+  realtimeChannel = supabase
+    .channel('inventory-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, (payload) => {
+      handleRealtimeChange('inventory', payload);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'movements' }, (payload) => {
+      handleRealtimeChange('movements', payload);
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        updateSyncIndicator('live');
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        updateSyncIndicator('error');
+      }
+    });
+}
+
+function handleRealtimeChange(table, payload) {
+  const { eventType, new: newRow, old: oldRow } = payload;
+  if (table === 'inventory') {
+    if (eventType === 'INSERT') {
+      if (!inventory.find(i => i.id === newRow.id)) {
+        inventory.push(dbRowToItem(newRow));
+        toast(`New item added by teammate: ${newRow.name}`, 'success');
+      }
+    } else if (eventType === 'UPDATE') {
+      const idx = inventory.findIndex(i => i.id === newRow.id);
+      if (idx >= 0) inventory[idx] = dbRowToItem(newRow);
+    } else if (eventType === 'DELETE') {
+      inventory = inventory.filter(i => i.id !== oldRow.id);
     }
+    saveLocalCache();
+    updateCategoryFilter();
+    renderTable();
+    updateStats();
+  } else if (table === 'movements') {
+    if (eventType === 'INSERT') {
+      if (!txnLog.find(t => t.id === newRow.id)) {
+        txnLog.push(dbRowToTxn(newRow));
+        saveLocalLogCache();
+      }
+    }
+  }
+}
+
+// ── Data shape converters ──────────────────────────────────────────────────
+function itemToDbRow(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    category: item.category || null,
+    sku: item.sku || null,
+    quantity: item.quantity || 0,
+    par_level: item.par || 0,
+    weight: item.weight || null,
+    storage_temp: item.temp || null,
+    location: item.location || null,
+    expiration_date: item.expiration || null,
+    received_date: item.received || null,
+    supplier: item.supplier || null,
+    cost_per_unit: item.cost || 0,
+    notes: item.notes || null,
+  };
+}
+
+function dbRowToItem(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category || '',
+    sku: row.sku || '',
+    quantity: row.quantity || 0,
+    par: row.par_level || 0,
+    weight: row.weight || '',
+    temp: row.storage_temp || '',
+    location: row.location || '',
+    expiration: row.expiration_date || '',
+    received: row.received_date || '',
+    supplier: row.supplier || '',
+    cost: row.cost_per_unit || 0,
+    notes: row.notes || '',
+  };
+}
+
+function txnToDbRow(t) {
+  return {
+    id: t.id,
+    item_id: t.itemId,
+    item_name: t.name,
+    item_sku: t.sku || null,
+    direction: t.dir,
+    amount: t.amount,
+    qty_before: t.before,
+    qty_after: t.after,
+    reason: t.reason || null,
+    note: t.note || null,
+    created_at: t.time,
+  };
+}
+
+function dbRowToTxn(row) {
+  return {
+    id: row.id,
+    itemId: row.item_id,
+    name: row.item_name,
+    sku: row.item_sku || '',
+    dir: row.direction,
+    amount: row.amount,
+    before: row.qty_before,
+    after: row.qty_after,
+    reason: row.reason || '',
+    note: row.note || '',
+    time: row.created_at,
+  };
+}
+
+// ── Local cache (offline fallback) ────────────────────────────────────────
+function saveLocalCache() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(inventory)); } catch(e) {}
+}
+
+function saveLocalLogCache() {
+  try {
+    const trimmed = txnLog.slice(-500);
+    localStorage.setItem('coldchain_txn_log', JSON.stringify(trimmed));
   } catch(e) {}
-  try { localStorage.setItem(STORAGE_KEY, json); } catch(e) {}
+}
+
+// ── Load data ──────────────────────────────────────────────────────────────
+async function loadData() {
+  if (dbMode === 'supabase' && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      inventory = data.map(dbRowToItem);
+      saveLocalCache();
+      // Seed demo data into Supabase if empty
+      if (!inventory.length) await seedDataToSupabase();
+      return;
+    } catch(e) {
+      console.warn('[ColdChain] Supabase load failed, using local cache:', e.message);
+      updateSyncIndicator('error');
+    }
+  }
+  // Local fallback
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) { inventory = JSON.parse(saved); return; }
+  } catch(e) {}
+  seedData();
+}
+
+// ── Save data ──────────────────────────────────────────────────────────────
+async function saveData() {
+  saveLocalCache();
+  // Supabase writes happen per-operation (upsert/delete), not here
+}
+
+// ── Supabase CRUD operations ───────────────────────────────────────────────
+async function dbUpsertItem(item) {
+  if (dbMode !== 'supabase' || !supabase) return;
+  try {
+    const { error } = await supabase.from('inventory').upsert(itemToDbRow(item));
+    if (error) throw error;
+  } catch(e) {
+    console.warn('[ColdChain] DB upsert failed:', e.message);
+    toast('Saved locally — DB sync failed', 'error');
+  }
+}
+
+async function dbDeleteItem(id) {
+  if (dbMode !== 'supabase' || !supabase) return;
+  try {
+    const { error } = await supabase.from('inventory').delete().eq('id', id);
+    if (error) throw error;
+  } catch(e) {
+    console.warn('[ColdChain] DB delete failed:', e.message);
+  }
+}
+
+async function dbInsertMovement(txn) {
+  if (dbMode !== 'supabase' || !supabase) return;
+  try {
+    const { error } = await supabase.from('movements').insert(txnToDbRow(txn));
+    if (error) throw error;
+  } catch(e) {
+    console.warn('[ColdChain] DB movement insert failed:', e.message);
+  }
+}
+
+// ── Load movement log ──────────────────────────────────────────────────────
+async function loadLog() {
+  if (dbMode === 'supabase' && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('movements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      txnLog = data.map(dbRowToTxn).reverse();
+      saveLocalLogCache();
+      return;
+    } catch(e) {
+      console.warn('[ColdChain] Supabase log load failed:', e.message);
+    }
+  }
+  // Local fallback
+  try {
+    const saved = localStorage.getItem('coldchain_txn_log');
+    if (saved) txnLog = JSON.parse(saved);
+  } catch(e) {}
+}
+
+// ── Sync indicator in header ───────────────────────────────────────────────
+function updateSyncIndicator(state) {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const states = {
+    live:    { text: '● LIVE',     cls: 'state-live'    },
+    syncing: { text: '◌ SYNCING',  cls: 'state-syncing' },
+    local:   { text: '○ LOCAL',    cls: 'state-local'   },
+    offline: { text: '⚡ OFFLINE',  cls: 'state-offline' },
+    error:   { text: '✕ DB ERROR', cls: 'state-error'   },
+  };
+  const s = states[state] || states.local;
+  el.textContent = s.text;
+  el.className = s.cls;
 }
 
 // ── Seed data ──────────────────────────────────────────────────────────────
@@ -1180,7 +1576,18 @@ function seedData() {
     { id: uid(), name: 'Shrimp (16/20 ct)', category: 'Seafood', sku: 'SHRMP-001', quantity: 18, par: 60, weight: '2 lb bag', temp: '-10°F / -23°C', location: 'Zone B, Row 1', expiration: d(60), received: d(-30), supplier: 'OceanPeak Co.', cost: 12.00, notes: 'Contains shellfish allergen' },
     { id: uid(), name: 'Vanilla Ice Cream (1 gal)', category: 'Dairy & Ice Cream', sku: 'ICE-001', quantity: 0, par: 24, weight: '1 gallon', temp: '-20°F / -29°C', location: 'Zone E, Row 2', expiration: d(-2), received: d(-60), supplier: 'CreamDream', cost: 6.50, notes: '' },
   ];
-  saveData();
+  saveLocalCache();
+}
+
+async function seedDataToSupabase() {
+  seedData(); // populate inventory array with defaults
+  try {
+    const { error } = await supabase.from('inventory').insert(inventory.map(itemToDbRow));
+    if (error) throw error;
+    toast('Sample data loaded into database', 'success');
+  } catch(e) {
+    console.warn('[ColdChain] Seed to Supabase failed:', e.message);
+  }
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
@@ -1411,7 +1818,7 @@ function openModal(id=null) {
 function editItem(id) { openModal(id); }
 function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); editingId = null; }
 
-function saveItem() {
+async function saveItem() {
   const name = document.getElementById('f-name').value.trim();
   const qty = parseInt(document.getElementById('f-quantity').value);
   if (!name) { toast('Product name is required', 'error'); return; }
@@ -1443,7 +1850,8 @@ function saveItem() {
     toast('Item added to inventory', 'success');
   }
 
-  saveData();
+  saveLocalCache();
+  await dbUpsertItem(item);
   closeModal();
   updateCategoryFilter();
   renderTable();
@@ -1453,7 +1861,8 @@ function saveItem() {
 function deleteItem(id) {
   if (!confirm('Remove this item from inventory?')) return;
   inventory = inventory.filter(i => i.id !== id);
-  saveData();
+  saveLocalCache();
+  dbDeleteItem(id);
   updateCategoryFilter();
   renderTable();
   updateStats();
@@ -1504,25 +1913,10 @@ function switchTab(tab, el) {
 }
 
 // ── Movement Log ──────────────────────────────────────────────────────────
-const LOG_KEY = 'coldchain_txn_log';
 let txnLog = [];
 
-async function loadLog() {
-  try {
-    if (window.storage) {
-      const r = await window.storage.get(LOG_KEY);
-      if (r && r.value) { txnLog = JSON.parse(r.value); return; }
-    }
-  } catch(e) {}
-  try { const s = localStorage.getItem(LOG_KEY); if (s) txnLog = JSON.parse(s); } catch(e) {}
-}
-
 async function saveLog() {
-  // Keep last 500 entries
-  if (txnLog.length > 500) txnLog = txnLog.slice(-500);
-  const json = JSON.stringify(txnLog);
-  try { if (window.storage) { await window.storage.set(LOG_KEY, json); return; } } catch(e) {}
-  try { localStorage.setItem(LOG_KEY, json); } catch(e) {}
+  saveLocalLogCache();
 }
 
 function renderLog() {
@@ -1646,7 +2040,7 @@ function updatePreview() {
   document.getElementById('preview-diff').textContent = diff !== 0 ? `(${diff>0?'+':''}${diff})` : '';
 }
 
-function confirmMove() {
+async function confirmMove() {
   const item = inventory.find(i => i.id === moveItemId);
   if (!item) return;
   const amount = parseInt(document.getElementById('move-amount').value)||0;
@@ -1657,7 +2051,7 @@ function confirmMove() {
   const after = moveDir==='in' ? before+amount : Math.max(0, before-amount);
 
   // Record transaction
-  txnLog.push({
+  const txn = {
     id: uid(),
     itemId: item.id,
     name: item.name,
@@ -1669,14 +2063,19 @@ function confirmMove() {
     reason,
     note,
     time: new Date().toISOString(),
-  });
+  };
+  txnLog.push(txn);
 
-  // Update inventory
+  // Update inventory quantity
   const idx = inventory.findIndex(i => i.id === moveItemId);
   inventory[idx].quantity = after;
 
-  saveData();
-  saveLog();
+  saveLocalCache();
+  saveLocalLogCache();
+
+  // Write to Supabase
+  await dbUpsertItem(inventory[idx]);
+  await dbInsertMovement(txn);
   closeMove();
   updateCategoryFilter();
   renderTable();
@@ -1686,36 +2085,158 @@ function confirmMove() {
   toast(`${verb} → ${item.name} now at ${after}`, moveDir==='in' ? 'success' : 'success');
 }
 
-// ── PWA: Service Worker Registration ─────────────────────────────────────
+// ── DB Setup Modal ────────────────────────────────────────────────────────
+function openDbSetup() {
+  const config = getSupabaseConfig();
+  if (config) {
+    document.getElementById('db-url').value = config.url || '';
+    document.getElementById('db-key').value = config.key || '';
+  }
+  const statusBar = document.getElementById('db-status-bar');
+  const disconnectBtn = document.getElementById('db-disconnect-btn');
+  if (dbMode === 'supabase') {
+    statusBar.className = 'db-status connected';
+    statusBar.textContent = '● Connected to Supabase — real-time sync active';
+    disconnectBtn.style.display = '';
+  } else {
+    statusBar.className = 'db-status disconnected';
+    statusBar.textContent = '○ Not connected — running in local mode';
+    disconnectBtn.style.display = 'none';
+  }
+  document.getElementById('db-overlay').classList.add('open');
+}
+
+function closeDbSetup() {
+  document.getElementById('db-overlay').classList.remove('open');
+}
+
+async function connectDB() {
+  const url = document.getElementById('db-url').value.trim();
+  const key = document.getElementById('db-key').value.trim();
+  if (!url || !key) { toast('Enter both URL and key', 'error'); return; }
+  if (!url.startsWith('https://')) { toast('URL must start with https://', 'error'); return; }
+
+  toast('Connecting to database...', 'success');
+  saveSupabaseConfig(url, key);
+
+  const ok = await initSupabase();
+  if (ok) {
+    closeDbSetup();
+    toast('Connected! Loading shared inventory...', 'success');
+    await loadData();
+    await loadLog();
+    updateCategoryFilter();
+    renderTable();
+    updateStats();
+    subscribeRealtime();
+    updateSyncIndicator('live');
+  } else {
+    document.getElementById('db-status-bar').className = 'db-status error';
+    document.getElementById('db-status-bar').textContent = '✕ Connection failed — check your URL and key';
+    clearSupabaseConfig();
+    toast('Connection failed — check your credentials', 'error');
+  }
+}
+
+async function disconnectDB() {
+  if (!confirm('Disconnect from Supabase? The app will use local data only.')) return;
+  if (realtimeChannel) { supabase.removeChannel(realtimeChannel); realtimeChannel = null; }
+  clearSupabaseConfig();
+  dbMode = 'local';
+  closeDbSetup();
+  updateSyncIndicator('local');
+  toast('Disconnected — using local mode', 'success');
+}
+
+function copySQL() {
+  const sql = document.getElementById('setup-sql').textContent;
+  navigator.clipboard.writeText(sql).then(() => toast('SQL copied to clipboard', 'success'));
+}
+
+document.getElementById('db-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeDbSetup();
+});
+
+// ── ColdChain Diagnostics ─────────────────────────────────────────────────
+// All startup messages are grouped so the console stays clean.
+// Only real runtime errors will appear outside this group.
+const CC = {
+  isHTTP: location.protocol === 'https:' || location.protocol === 'http:',
+  isSecure: location.protocol === 'https:',
+
+  log(msg, ...args)  { console.log(`%c[ColdChain] ${msg}`, 'color:#00c4ff', ...args); },
+  warn(msg, ...args) { console.warn(`[ColdChain] ${msg}`, ...args); },
+  err(msg, ...args)  { console.error(`[ColdChain] ${msg}`, ...args); },
+
+  group(label) { console.groupCollapsed(`%c❄ ColdChain — ${label}`, 'color:#00c4ff;font-weight:bold'); },
+  groupEnd()   { console.groupEnd(); },
+};
+
+// ── PWA: inject manifest only when served over HTTP ───────────────────────
+// Prevents the "manifest.json 404" console error when opening as a local file.
+if (CC.isHTTP) {
+  const manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.href = 'manifest.json';
+  // Silence the 404 if manifest.json hasn't been uploaded yet
+  manifest.onerror = () => CC.warn('manifest.json not found — PWA install unavailable. Upload manifest.json to enable.');
+  document.head.appendChild(manifest);
+
+  const icon = document.createElement('link');
+  icon.rel = 'apple-touch-icon';
+  icon.href = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%230a0e14'/%3E%3Ctext x='96' y='130' font-size='100' text-anchor='middle'%3E%E2%9D%84%EF%B8%8F%3C/text%3E%3C/svg%3E";
+  document.head.appendChild(icon);
+}
+
+// ── PWA: Service Worker ────────────────────────────────────────────────────
 let swRegistration = null;
 
 async function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
+  // Guard 1: API must exist
+  if (!('serviceWorker' in navigator)) {
+    CC.log('Service Worker not supported in this browser — skipping.');
+    return;
+  }
+  // Guard 2: must be served over HTTP/HTTPS (not file://)
+  if (!CC.isHTTP) {
+    CC.log('Service Worker requires HTTP/HTTPS. Open via Vercel URL to enable offline mode.');
+    return;
+  }
+  // Guard 3: HTTPS required for SW in production (HTTP ok for localhost)
+  if (!CC.isSecure && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    CC.warn('Service Worker requires HTTPS in production. Deploy to Vercel to enable.');
+    return;
+  }
+
   try {
     swRegistration = await navigator.serviceWorker.register('service-worker.js');
-    console.log('[ColdChain] Service Worker registered:', swRegistration.scope);
+    CC.log('Service Worker registered. Scope:', swRegistration.scope);
 
-    // Listen for updates
     swRegistration.addEventListener('updatefound', () => {
       const newWorker = swRegistration.installing;
+      if (!newWorker) return;
       newWorker.addEventListener('statechange', () => {
         if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-          toast('Update available — refresh to get the latest version', 'success');
+          toast('App update available — refresh to apply', 'success');
         }
       });
     });
   } catch (err) {
-    console.warn('[ColdChain] Service Worker registration failed:', err);
+    // service-worker.js not found is expected when running standalone HTML
+    if (err.name === 'TypeError' || err.message?.includes('404') || err.message?.includes('Failed to register')) {
+      CC.warn('service-worker.js not found — upload it alongside the HTML to enable offline mode.');
+    } else {
+      CC.warn('Service Worker registration failed:', err.message);
+    }
   }
 }
 
-// ── PWA: Install prompt ───────────────────────────────────────────────────
+// ── PWA: Install prompt ────────────────────────────────────────────────────
 let deferredInstallPrompt = null;
 
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   deferredInstallPrompt = e;
-  // Show banner only if not dismissed before
   if (!localStorage.getItem('pwa-dismissed')) {
     document.getElementById('pwa-banner').style.display = '';
   }
@@ -1727,40 +2248,75 @@ window.addEventListener('appinstalled', () => {
   toast('ColdChain installed successfully!', 'success');
 });
 
-document.getElementById('pwa-install-btn').addEventListener('click', async () => {
-  if (!deferredInstallPrompt) return;
-  deferredInstallPrompt.prompt();
-  const { outcome } = await deferredInstallPrompt.userChoice;
-  if (outcome === 'accepted') {
-    document.getElementById('pwa-banner').style.display = 'none';
-  }
-  deferredInstallPrompt = null;
-});
+const pwaBtn = document.getElementById('pwa-install-btn');
+if (pwaBtn) {
+  pwaBtn.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    const { outcome } = await deferredInstallPrompt.userChoice;
+    if (outcome === 'accepted') {
+      document.getElementById('pwa-banner').style.display = 'none';
+    }
+    deferredInstallPrompt = null;
+  });
+}
 
 function dismissPWA() {
-  document.getElementById('pwa-banner').style.display = 'none';
+  const banner = document.getElementById('pwa-banner');
+  if (banner) banner.style.display = 'none';
   localStorage.setItem('pwa-dismissed', '1');
 }
 
-// ── PWA: Offline / Online detection ──────────────────────────────────────
+// ── Network status ─────────────────────────────────────────────────────────
 function updateOnlineStatus() {
-  const bar = document.getElementById('offline-bar');
   if (!navigator.onLine) {
-    bar.classList.add('visible');
+    if (dbMode === 'supabase') updateSyncIndicator('offline');
   } else {
-    bar.classList.remove('visible');
-    // Sync any queued offline actions if needed
+    if (dbMode === 'supabase') updateSyncIndicator('live');
+    else updateSyncIndicator('local');
   }
 }
 
 window.addEventListener('online', () => {
   updateOnlineStatus();
-  toast('Back online — inventory is up to date', 'success');
+  if (dbMode === 'supabase') toast('Back online — syncing with database', 'success');
 });
 window.addEventListener('offline', () => {
   updateOnlineStatus();
-  toast('Gone offline — changes will be saved locally', 'error');
+  toast('Gone offline — changes saved locally on this device', 'error');
 });
+
+// ── Global error boundary ──────────────────────────────────────────────────
+// Catches unhandled promise rejections and runtime errors so they surface
+// clearly rather than as cryptic browser messages.
+window.addEventListener('unhandledrejection', e => {
+  // Suppress known non-critical rejections
+  const msg = e.reason?.message || String(e.reason);
+  const suppress = [
+    'Load failed',           // font/CDN fetch when offline
+    'Failed to fetch',       // same
+    'NetworkError',          // same
+    'net::ERR_',             // Chrome network errors
+    'The operation was aborted', // AbortController cancels
+  ];
+  if (suppress.some(s => msg.includes(s))) {
+    e.preventDefault(); // don't log to console
+    return;
+  }
+  CC.err('Unhandled error:', msg);
+});
+
+window.addEventListener('error', e => {
+  // Suppress font/CDN resource load errors — these are non-fatal
+  if (e.target && (e.target.tagName === 'LINK' || e.target.tagName === 'SCRIPT')) {
+    const src = e.target.href || e.target.src || '';
+    if (src.includes('fonts.googleapis') || src.includes('fonts.gstatic') || src.includes('jsdelivr')) {
+      CC.warn(`External resource failed to load (non-fatal): ${src}`);
+      e.preventDefault();
+      return;
+    }
+  }
+}, true); // capture phase to catch resource errors
 
 // ── Modal outside click ───────────────────────────────────────────────────
 document.getElementById('modal-overlay').addEventListener('click', e => {
@@ -1772,15 +2328,55 @@ document.getElementById('move-overlay').addEventListener('click', e => {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 (async function init() {
+  CC.group('Startup');
+  CC.log('Version: 1.0 | Mode:', CC.isHTTP ? 'HTTP' : 'Local file');
+
+  // Inject manifest / SW only when context supports it
+  if (!CC.isHTTP) {
+    CC.log('Running as local file — Supabase, SW, and PWA features require HTTP. Use Vercel to deploy.');
+  }
+
+  // Supabase connection
+  const config = getSupabaseConfig();
+  if (config?.url && config?.key) {
+    CC.log('Saved Supabase config found — attempting connection...');
+    updateSyncIndicator('syncing');
+    const ok = await initSupabase();
+    if (ok) {
+      CC.log('Supabase connected successfully.');
+    } else {
+      CC.warn('Supabase connection failed — falling back to local storage.');
+      updateSyncIndicator('error');
+    }
+  } else {
+    CC.log('No Supabase config — running in local mode. Click the sync pill to connect.');
+    updateSyncIndicator('local');
+  }
+
+  // Load data
   await loadData();
   await loadLog();
+  CC.log(`Loaded ${inventory.length} inventory items, ${txnLog.length} movement records.`);
+
+  // Render
   updateCategoryFilter();
   renderTable();
   updateStats();
   updateClock();
   updateOnlineStatus();
   setInterval(updateClock, 1000);
-  registerServiceWorker();
+
+  // PWA / Service Worker
+  registerServiceWorker(); // handles all its own guards internally
+
+  // Realtime subscription
+  if (dbMode === 'supabase') {
+    subscribeRealtime();
+    updateSyncIndicator('live');
+    CC.log('Realtime subscription active.');
+  }
+
+  CC.groupEnd();
 })();
 </script>
 </body>
