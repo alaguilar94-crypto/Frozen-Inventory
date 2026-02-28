@@ -1304,21 +1304,22 @@ function clearSupabaseConfig() {
 
 async function initSupabase() {
   const config = getSupabaseConfig();
-  if (!config?.url || !config?.key) return false;
+  if (!config?.url || !config?.key) return { ok: false, error: 'Missing URL or key.' };
+
   const loaded = await loadSupabaseSDK();
-  if (!loaded) return false;
+  if (!loaded) return { ok: false, error: 'Could not load Supabase SDK. Check your internet connection.' };
+
   try {
     supabase = window.supabase.createClient(config.url, config.key);
-    // Quick connectivity test
     const { error } = await supabase.from('inventory').select('id').limit(1);
     if (error) throw error;
     dbMode = 'supabase';
-    return true;
+    return { ok: true };
   } catch(e) {
-    console.warn('[ColdChain] Supabase init failed:', e.message);
+    CC.warn('Supabase init failed:', e.message, '| Code:', e.code, '| Details:', e.details);
     supabase = null;
     dbMode = 'local';
-    return false;
+    return { ok: false, error: e.message, code: e.code, hint: e.hint, details: e.details };
   }
 }
 
@@ -2116,11 +2117,14 @@ async function connectDB() {
   if (!url || !key) { toast('Enter both URL and key', 'error'); return; }
   if (!url.startsWith('https://')) { toast('URL must start with https://', 'error'); return; }
 
-  toast('Connecting to database...', 'success');
+  const statusBar = document.getElementById('db-status-bar');
+  statusBar.className = 'db-status disconnected';
+  statusBar.textContent = '◌ Connecting...';
+
   saveSupabaseConfig(url, key);
 
-  const ok = await initSupabase();
-  if (ok) {
+  const result = await initSupabase();
+  if (result.ok) {
     closeDbSetup();
     toast('Connected! Loading shared inventory...', 'success');
     await loadData();
@@ -2131,10 +2135,16 @@ async function connectDB() {
     subscribeRealtime();
     updateSyncIndicator('live');
   } else {
-    document.getElementById('db-status-bar').className = 'db-status error';
-    document.getElementById('db-status-bar').textContent = '✕ Connection failed — check your URL and key';
+    // Show the exact Supabase error in the modal so user can diagnose
+    const parts = [result.error];
+    if (result.code)    parts.push(`Code: ${result.code}`);
+    if (result.hint)    parts.push(`Hint: ${result.hint}`);
+    if (result.details) parts.push(`Details: ${result.details}`);
+
+    statusBar.className = 'db-status error';
+    statusBar.innerHTML = `✕ Connection failed<br><small style="font-weight:normal;opacity:0.85">${parts.join(' · ')}</small>`;
     clearSupabaseConfig();
-    toast('Connection failed — check your credentials', 'error');
+    toast('Connection failed — see details in the panel', 'error');
   }
 }
 
@@ -2341,11 +2351,11 @@ document.getElementById('move-overlay').addEventListener('click', e => {
   if (config?.url && config?.key) {
     CC.log('Saved Supabase config found — attempting connection...');
     updateSyncIndicator('syncing');
-    const ok = await initSupabase();
-    if (ok) {
+    const result = await initSupabase();
+    if (result.ok) {
       CC.log('Supabase connected successfully.');
     } else {
-      CC.warn('Supabase connection failed — falling back to local storage.');
+      CC.warn('Supabase connection failed —', result.error);
       updateSyncIndicator('error');
     }
   } else {
@@ -2375,7 +2385,6 @@ document.getElementById('move-overlay').addEventListener('click', e => {
     updateSyncIndicator('live');
     CC.log('Realtime subscription active.');
   }
-
   CC.groupEnd();
 })();
 </script>
