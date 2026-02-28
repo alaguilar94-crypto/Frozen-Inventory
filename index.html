@@ -1259,13 +1259,17 @@ let supabase = null;
 async function loadSupabaseSDK() {
   return new Promise((resolve) => {
     // Already loaded
-    if (window.supabase) { resolve(true); return; }
+    if (window.supabase?.createClient || window.supabaseJs?.createClient) { resolve(true); return; }
     // Can't load external scripts from file:// — skip silently
     if (!CC.isHTTP) { resolve(false); return; }
 
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
-    s.onload = () => resolve(true);
+    s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js';
+    s.onload = () => {
+      // v2 UMD bundle exposes window.supabase = { createClient, ... }
+      CC.log('Supabase SDK loaded. Exports:', Object.keys(window.supabase || {}));
+      resolve(true);
+    };
     s.onerror = () => {
       CC.warn('Supabase SDK failed to load from CDN — check your internet connection.');
       resolve(false);
@@ -1273,6 +1277,8 @@ async function loadSupabaseSDK() {
     document.head.appendChild(s);
   });
 }
+
+// ── State ──────────────────────────────────────────────────────────────────
 
 // ── State ──────────────────────────────────────────────────────────────────
 let inventory = [];
@@ -1309,8 +1315,15 @@ async function initSupabase() {
   const loaded = await loadSupabaseSDK();
   if (!loaded) return { ok: false, error: 'Could not load Supabase SDK. Check your internet connection.' };
 
+  // The UMD bundle for supabase-js v2 exposes window.supabase.createClient
+  const createClient = window.supabase?.createClient;
+  if (!createClient) {
+    CC.warn('createClient not found on window.supabase. Available:', Object.keys(window.supabase || {}));
+    return { ok: false, error: 'Supabase SDK loaded but createClient not found. Please refresh and try again.' };
+  }
+
   try {
-    supabase = window.supabase.createClient(config.url, config.key);
+    supabase = createClient(config.url, config.key);
     const { error } = await supabase.from('inventory').select('id').limit(1);
     if (error) throw error;
     dbMode = 'supabase';
